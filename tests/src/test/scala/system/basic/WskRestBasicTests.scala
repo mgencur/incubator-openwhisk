@@ -22,6 +22,7 @@ import akka.http.scaladsl.model.StatusCodes.BadGateway
 import akka.http.scaladsl.model.StatusCodes.Conflict
 import akka.http.scaladsl.model.StatusCodes.Unauthorized
 import akka.http.scaladsl.model.StatusCodes.NotFound
+import akka.http.scaladsl.model.StatusCodes.OK
 import java.time.Instant
 
 import scala.concurrent.duration.DurationInt
@@ -706,10 +707,15 @@ class WskRestBasicTests extends TestHelpers with WskTestHelpers with WskActorSys
     stderr should include("The requested resource does not exist.")
   }
 
-  it should "reject firing of a trigger that does not exist" in {
-    val name = "nonexistentTrigger"
-    val stderr = wsk.trigger.fire(name, expectedExitCode = NotFound.intValue).stderr
-    stderr should include("The requested resource does not exist.")
+  it should "reject firing of a trigger that does not exist after deletion" in withAssetCleaner(wskprops) {
+    (wp, assetHelper) =>
+      val triggerName = "triggerToBeDeleted"
+      assetHelper.withCleaner(wsk.trigger, triggerName, confirmDelete = false) { (trigger, _) =>
+        trigger.create(triggerName)
+      }
+      wsk.trigger.delete(triggerName).statusCode shouldBe OK
+      val stderr = wsk.trigger.fire(triggerName, expectedExitCode = NotFound.intValue).stderr
+      stderr should include("The requested resource does not exist.")
   }
 
   it should "create and fire a trigger with a rule whose action has been deleted" in withAssetCleaner(wskprops) {
