@@ -263,6 +263,28 @@ class WskSequenceTests extends TestHelpers with WskTestHelpers with StreamLoggin
       checkLogsAtomicAction(0, pkgParamRun, new Regex(pkgStr))
   }
 
+  it should "create and run a sequence including different runtimes with passing parameters" in withAssetCleaner(
+    wskprops) { (wp, assetHelper) =>
+    //specify python:3 due to https://github.com/apache/incubator-openwhisk-runtime-python/issues/35
+    val actions = Seq(("echo.js", "nodejs:6"), ("hello.py", "python:3"))
+    for (a <- actions) {
+      assetHelper.withCleaner(wsk.action, s"${a._1.split("\\.")(0)}") { (action, actionName) =>
+        action.create(name = actionName, artifact = Some(TestUtils.getTestActionFilename(a._1)), kind = Some(a._2))
+      }
+    }
+    val sName = "sSequence"
+    assetHelper.withCleaner(wsk.action, sName) { (action, seqName) =>
+      action.create(seqName, Some(actions.map(_._1.split("\\.")(0)).mkString(",")), kind = Some("sequence"))
+    }
+    val greetingName = "George"
+    val run = wsk.action.invoke(sName, parameters = Map("name" -> JsString(greetingName)))
+    withActivation(wsk.activation, run, totalWait = 2 * allowedActionDuration) { activation =>
+      checkSequenceLogsAndAnnotations(activation, 2)
+      val result = activation.response.result.get
+      result.fields.get("greeting") shouldBe Some(JsString(s"Hello ${greetingName}!"))
+    }
+  }
+
   it should "run a sequence with an action in a package binding with parameters" in withAssetCleaner(wskprops) {
     (wp, assetHelper) =>
       val packageName = "package1"
