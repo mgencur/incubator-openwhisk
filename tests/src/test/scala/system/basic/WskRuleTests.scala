@@ -74,6 +74,20 @@ abstract class WskRuleTests extends TestHelpers with WskTestHelpers {
     }
   }
 
+  def ruleSetupForSequence(ruleName: String, triggerName: String, sequenceName: String, actionFiles: Seq[String], assetHelper: AssetCleaner): Unit = {
+    actionFiles.foreach(a =>
+      assetHelper.withCleaner(wsk.action, a.split("\\.")(0)) { (action, name) =>
+        action.create(name, artifact = Some(TestUtils.getTestActionFilename(a)))
+      }
+    )
+    assetHelper.withCleaner(wsk.action, sequenceName) { (action, name) =>
+      action.create(name, Some(actionFiles.map(_.split("\\.")(0)).mkString(",")), kind = Some("sequence"))
+    }
+    assetHelper.withCleaner(wsk.rule, ruleName) { (rule, name) =>
+      rule.create(name, triggerName, sequenceName)
+    }
+  }
+
   behavior of "Whisk rules"
 
   it should "invoke the action attached on trigger fire, creating an activation for each entity including the cause" in withAssetCleaner(
@@ -323,6 +337,49 @@ abstract class WskRuleTests extends TestHelpers with WskTestHelpers {
           actionActivation.logs.get.mkString(" ") should include(s"hello, $testString")
         }
       }
+  }
+
+  it should "connect a trigger to action and sequence, invoking them eventually" in withAssetCleaner(
+    wskprops) { (wp, assetHelper) =>
+    val testStringForSequence = "this \nis \na \ntest"
+    val testResultForSequence = JsObject("count" -> testStringForSequence.split(" ").length.toJson)
+
+    val ruleName = withTimestamp("r1to1")
+    val triggerName = withTimestamp("t1")
+    val actionName = withTimestamp("a1to1")
+
+    ruleSetup(Seq((ruleName, triggerName, (actionName, actionName, defaultAction))), assetHelper)
+
+    val ruleName2 = withTimestamp("r2")
+    val sequenceName = withTimestamp("s1")
+    ruleSetupForSequence(ruleName2, triggerName, sequenceName, Seq("split.js", "sort.js", "head.js", "cat.js"), assetHelper)
+
+    val run = wsk.trigger.fire(triggerName, Map("payload" -> testStringForSequence.toJson))
+
+    withActivation(wsk.activation, run) { triggerActivation =>
+      triggerActivation.cause shouldBe None
+
+      val ruleActivations = triggerActivation.logs.get.map(_.parseJson.convertTo[RuleActivationResult])
+      ruleActivations should have size 2
+
+      val ruleActivation = ruleActivations.head
+      ruleActivation.success shouldBe true
+      ruleActivation.statusCode shouldBe 0
+
+      withActivation(wsk.activation, ruleActivation.activationId) { actionActivation =>
+        actionActivation.response.result shouldBe Some(testResultForSequence)
+      }
+
+      val rule2Activation = ruleActivations.tail.head
+      rule2Activation.success shouldBe true
+      rule2Activation.statusCode shouldBe 0
+
+      withActivation(wsk.activation, rule2Activation.activationId) { actionActivation =>
+        val lines = actionActivation.response.result.get.fields("lines").convertTo[List[String]]
+        lines should have size 1
+        lines.head shouldBe "a "
+      }
+    }
   }
 
   it should "connect two triggers to two different actions, invoking them both eventually" in withAssetCleaner(wskprops) {
