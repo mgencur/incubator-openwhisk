@@ -160,6 +160,19 @@ class WskConductorTests extends TestHelpers with WskTestHelpers with JsHelpers w
       checkConductorLogsAndAnnotations(activation, 3) // conductor, step, conductor
     }
 
+    val runException = "runexception"
+    assetHelper.withCleaner(wsk.action, runException) { (action, _) =>
+      action.create(runException, Some(TestUtils.getTestActionFilename(s"$runException.js")))
+    }
+
+    // dynamically invoke step action with an uncaught exception
+    val uncaughtExceptionRun = wsk.action.invoke(conductor, Map("action" -> runException.toJson))
+    withActivation(wsk.activation, uncaughtExceptionRun) { activation =>
+      activation.response.status shouldBe "action developer error"
+      activation.response.result shouldBe Some(JsObject("error" -> JsString("An error has occurred: Extraordinary exception")))
+      checkConductorLogsAndAnnotations(activation, 3) // conductor, step, conductor
+    }
+
     // dynamically invoke step action, forwarding state
     val secondrun = wsk.action.invoke(
       conductor,
